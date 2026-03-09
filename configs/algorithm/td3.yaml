@@ -1,0 +1,14 @@
+# TD3 hyperparameters (with FastTD3 options)
+algorithm: td3
+lr: 3.0e-4
+gamma: 0.99
+tau: 0.005
+policy_delay: 2
+exploration_noise: 0.1
+target_noise: 0.2
+noise_clip: 0.5
+batch_size: 32768
+buffer_size: 1_000_000
+warmup_steps: 25000
+distributional: true
+num_atoms: 101

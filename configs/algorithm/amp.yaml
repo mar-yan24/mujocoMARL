@@ -1,0 +1,11 @@
+# AMP hyperparameters
+algorithm: amp
+lr: 3.0e-4
+gamma: 0.99
+gae_lambda: 0.95
+clip_eps: 0.2
+entropy_coef: 0.01
+disc_lr: 1.0e-4
+disc_weight: 0.5
+gradient_penalty: 10.0
+replay_buffer_size: 100000

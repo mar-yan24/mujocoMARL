@@ -1,0 +1,17 @@
+# Example experiment config: PPO on Berkeley Humanoid (JAX)
+algorithm: ppo
+framework: jax
+seed: 0
+total_timesteps: 100_000_000
+
+env:
+  robot: BerkeleyHumanoid
+  task: Joystick
+  terrain: FlatTerrain
+  num_envs: 4096
+  domain_randomization: false
+
+network:
+  actor_hidden: [512, 256, 128]
+  critic_hidden: [512, 256, 128]
+  activation: elu

@@ -1,0 +1,6 @@
+# Booster T1 configuration
+robot: BoosterT1
+actuated_dof: 23
+obs_dim: 82
+task: Joystick
+terrain: FlatTerrain

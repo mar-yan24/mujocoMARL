@@ -1,0 +1,6 @@
+# Berkeley Humanoid configuration
+robot: BerkeleyHumanoid
+actuated_dof: 12
+obs_dim: 49
+task: Joystick
+terrain: FlatTerrain

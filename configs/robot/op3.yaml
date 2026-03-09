@@ -1,0 +1,6 @@
+# Robotis OP3 configuration
+robot: OP3
+actuated_dof: 20
+obs_dim: 73
+task: Joystick
+terrain: FlatTerrain

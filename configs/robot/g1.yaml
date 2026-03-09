@@ -1,0 +1,6 @@
+# Unitree G1 configuration
+robot: G1
+actuated_dof: 29
+obs_dim: 100
+task: Joystick
+terrain: FlatTerrain

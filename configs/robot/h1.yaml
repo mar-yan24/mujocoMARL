@@ -1,0 +1,6 @@
+# Unitree H1 configuration
+robot: H1
+actuated_dof: 19
+obs_dim: 70
+task: Joystick
+terrain: FlatTerrain

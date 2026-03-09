@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=68.0", "setuptools-scm>=8.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "humanoid_rl"
+version = "0.1.0"
+description = "Multi-algorithm reinforcement learning for humanoid locomotion on MuJoCo Playground"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = [
+    "jax[cuda12]>=0.4.30",
+    "flax>=0.8",
+    "optax>=0.2",
+    "distrax>=0.1.5",
+    "mujoco>=3.2",
+    "mujoco-mjx>=3.2",
+    "mujoco-playground",
+    "brax>=0.10",
+    "flashbax>=0.1",
+    "torch>=2.2",
+    "stable-baselines3>=2.3",
+    "sb3-contrib>=2.3",
+    "gymnasium>=0.29",
+    "numpy>=1.26",
+    "pyyaml>=6.0",
+    "wandb>=0.16",
+    "tensorboard>=2.16",
+    "matplotlib>=3.8",
+    "tqdm>=4.66",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.3",
+]
+
+[tool.setuptools.packages.find]
+include = ["src*", "scripts*", "configs*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

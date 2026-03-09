@@ -1,0 +1,8 @@
+# A2C hyperparameters
+algorithm: a2c
+lr: 7.0e-4
+gamma: 0.99
+gae_lambda: 0.95
+entropy_coef: 0.01
+value_coef: 0.5
+max_grad_norm: 0.5
