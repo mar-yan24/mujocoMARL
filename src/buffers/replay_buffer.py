@@ -89,7 +89,9 @@ def add_batch(
     return buf
 
 
-@jax.jit
+from functools import partial
+
+@partial(jax.jit, static_argnums=(2,))
 def sample_batch(
     buf: ReplayBufferState,
     rng: jax.Array,

@@ -61,8 +61,8 @@ class TD3Config:
     batch_size: int = 32768 #large batch -- test
     buffer_size: int = 1_000_000
     learning_starts: int = 25_000
-    # fasttd3 distro critic?
-    distributional: bool = True
+    # fasttd3 distributional critic (experimental, not yet wired into loss)
+    distributional: bool = False
     num_atoms: int = 101
     v_min: float = -10.0
     v_max: float = 10.0
@@ -74,6 +74,15 @@ class SACConfig:
     init_alpha: float = 1.0
     auto_alpha: bool = True # auto entropy tuning
     target_entropy: Optional[float] = None # None = -dim(A)
+    batch_size: int = 256
+    buffer_size: int = 1_000_000
+    learning_starts: int = 10_000
+
+
+@dataclass
+class DDPGConfig:
+    tau: float = 0.005
+    exploration_noise: float = 0.1
     batch_size: int = 256
     buffer_size: int = 1_000_000
     learning_starts: int = 10_000
@@ -125,8 +134,9 @@ class EnvConfig:
 class TrainConfig:
     algorithm: AlgorithmType = AlgorithmType.PPO
     framework: Framework = Framework.JAX
-    speed: int = 0
+    seed: int = 0
     total_timesteps: int = 100_000_000
+    rollout_steps: int = 10 # env steps per update (on-policy)
     lr: float = 3e-4
     gamma: float = 0.99
     log_interval: int = 10
@@ -143,19 +153,98 @@ class TrainConfig:
     ppo: PPOConfig = field(default_factory=PPOConfig)
     td3: TD3Config = field(default_factory=TD3Config)
     sac: SACConfig = field(default_factory=SACConfig)
+    ddpg: DDPGConfig = field(default_factory=DDPGConfig)
     a2c: A2CConfig = field(default_factory=A2CConfig)
     trpo: TRPOConfig = field(default_factory=TRPOConfig)
     amp: AMPConfig = field(default_factory=AMPConfig)
 
 
+def _merge_into_dataclass(dc, overrides: dict):
+    '''recursively merge a dict into a dataclass instance'''
+    for key, value in overrides.items():
+        if not hasattr(dc, key):
+            continue
+        current = getattr(dc, key)
+        if isinstance(current, Enum):
+            setattr(dc, key, type(current)(value))
+        elif hasattr(current, '__dataclass_fields__') and isinstance(value, dict):
+            _merge_into_dataclass(current, value)
+        else:
+            setattr(dc, key, value)
+
+
 def load_config(path: str | Path) -> TrainConfig:
-    # load a yaml config and load it into a terrainconfig
+    '''load a yaml config and merge it into a TrainConfig'''
     with open(path) as f:
         raw = yaml.safe_load(f)
-    #  TODO: recursive merge into trainconfig dataclass
-    raise NotImplementedError
+    cfg = TrainConfig()
+    if raw:
+        _merge_into_dataclass(cfg, raw)
+    return cfg
 
 
 def make_env_name(cfg: EnvConfig) -> str:
-    # construct playground registry name: robot,task,terrain
+    '''construct playground registry name: {Robot}{Task}{Terrain}'''
     return f"{cfg.robot}{cfg.task}{cfg.terrain}"
+
+
+def get_algo_config(cfg: TrainConfig):
+    '''return the algorithm-specific sub-config'''
+    mapping = {
+        AlgorithmType.PPO: cfg.ppo,
+        AlgorithmType.TD3: cfg.td3,
+        AlgorithmType.SAC: cfg.sac,
+        AlgorithmType.DDPG: cfg.ddpg,
+        AlgorithmType.A2C: cfg.a2c,
+        AlgorithmType.TRPO: cfg.trpo,
+        AlgorithmType.AMP: cfg.amp,
+    }
+    return mapping[cfg.algorithm]
+
+
+def parse_args() -> TrainConfig:
+    '''parse CLI args into a TrainConfig'''
+    import argparse
+    parser = argparse.ArgumentParser(description="humanoid_rl training")
+    parser.add_argument("--config", type=str, default=None, help="path to yaml config")
+    parser.add_argument("--algorithm", type=str, default="ppo")
+    parser.add_argument("--framework", type=str, default="jax")
+    parser.add_argument("--robot", type=str, default="BerkeleyHumanoid")
+    parser.add_argument("--task", type=str, default="Joystick")
+    parser.add_argument("--terrain", type=str, default="FlatTerrain")
+    parser.add_argument("--num-envs", type=int, default=4096)
+    parser.add_argument("--total-timesteps", type=int, default=100_000_000)
+    parser.add_argument("--rollout-steps", type=int, default=10)
+    parser.add_argument("--lr", type=float, default=3e-4)
+    parser.add_argument("--gamma", type=float, default=0.99)
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--checkpoint-dir", type=str, default="checkpoints")
+    parser.add_argument("--wandb-project", type=str, default="humanoid-rl")
+    parser.add_argument("--wandb-entity", type=str, default=None)
+    parser.add_argument("--no-wandb", action="store_true")
+    parser.add_argument("--render", action="store_true")
+    args = parser.parse_args()
+
+    # start from yaml or defaults
+    if args.config:
+        cfg = load_config(args.config)
+    else:
+        cfg = TrainConfig()
+
+    # CLI overrides
+    cfg.algorithm = AlgorithmType(args.algorithm)
+    cfg.framework = Framework(args.framework)
+    cfg.seed = args.seed
+    cfg.total_timesteps = args.total_timesteps
+    cfg.rollout_steps = args.rollout_steps
+    cfg.lr = args.lr
+    cfg.gamma = args.gamma
+    cfg.checkpoint_dir = args.checkpoint_dir
+    cfg.wandb_project = args.wandb_project
+    cfg.wandb_entity = args.wandb_entity
+    cfg.env.robot = args.robot
+    cfg.env.task = args.task
+    cfg.env.terrain = args.terrain
+    cfg.env.num_envs = args.num_envs
+
+    return cfg

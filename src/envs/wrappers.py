@@ -17,10 +17,51 @@ class EnvState:
     info: dict # step count, rng, etc.
 
 
+def _flatten_obs(obs):
+    '''
+    playground envs can return obs as a dict like:
+      {'state': array(...), 'privileged_state': array(...)}
+    we flatten to a single array for the policy.
+    if already an array, pass through.
+    '''
+    if isinstance(obs, dict):
+        # use 'state' key if available (policy-relevant obs)
+        # fall back to concatenating all values
+        if 'state' in obs:
+            return obs['state']
+        return jnp.concatenate([v for v in obs.values()], axis=-1)
+    return obs
+
+
+def _resolve_obs_size(raw_obs_size) -> int:
+    '''
+    playground observation_size can be:
+      - int (simple)
+      - dict like {'state': (52,), 'privileged_state': (114,)}
+    resolve to a single int matching what _flatten_obs produces.
+    '''
+    if isinstance(raw_obs_size, int):
+        return raw_obs_size
+    if isinstance(raw_obs_size, dict):
+        if 'state' in raw_obs_size:
+            s = raw_obs_size['state']
+            return s[0] if isinstance(s, tuple) else int(s)
+        # sum all components
+        total = 0
+        for v in raw_obs_size.values():
+            total += v[0] if isinstance(v, tuple) else int(v)
+        return total
+    # maybe a tuple like (52,)
+    if isinstance(raw_obs_size, tuple):
+        return raw_obs_size[0]
+    return int(raw_obs_size)
+
+
 class PlaygroundEnvWrapper:
     '''
     wraps a Playground MjxEnv for use with our training loops.
     handles:
+        - dict obs -> flat array conversion
         - auto-reset on done
         - observation normalization (running mean/var)
         - action scaling
@@ -34,6 +75,9 @@ class PlaygroundEnvWrapper:
         self._num_envs = num_envs
         self._domain_randomization = domain_randomization
 
+        # resolve obs size from possibly-dict observation_size
+        self._obs_size = _resolve_obs_size(self._env.observation_size)
+
         # try loading default config and domain randomizer
         self._config = registry.get_default_config(env_name)
         if domain_randomization:
@@ -46,7 +90,7 @@ class PlaygroundEnvWrapper:
 
     @property
     def obs_size(self) -> int:
-        return self._env.observation_size
+        return self._obs_size
 
     @property
     def action_size(self) -> int:
@@ -62,7 +106,7 @@ class PlaygroundEnvWrapper:
         state = jax.vmap(self._env.reset)(rngs)
         return EnvState(
             pipeline_state=state.pipeline_state,
-            obs=state.obs,
+            obs=_flatten_obs(state.obs),
             reward=state.reward,
             done=state.done,
             info=state.info,
@@ -71,10 +115,13 @@ class PlaygroundEnvWrapper:
     def step(self, state: EnvState, action: jax.Array) -> EnvState:
         '''
         step all environments
-        handles auto-reset internally
+        handles auto-reset internally via playground's built-in mechanism
         '''
         from mujoco_playground._src.mjx_env import State as PGState
 
+        # playground expects the original obs format, but we store flattened.
+        # reconstruct by passing our flat obs -- playground's step() uses
+        # pipeline_state internally, not obs, so this is safe.
         pg_state = PGState(
             pipeline_state=state.pipeline_state,
             obs=state.obs,
@@ -90,16 +137,18 @@ class PlaygroundEnvWrapper:
         rngs = jax.random.split(rng, self._num_envs)
         reset_state = jax.vmap(self._env.reset)(rngs)
 
-        def _select(reset_val, next_val):
-            return jnp.where(
-                next_pg.done[:, None] if next_val.ndim > 1 else next_pg.done,
-                reset_val,
-                next_val,
-            )
+        next_obs = _flatten_obs(next_pg.obs)
+        reset_obs = _flatten_obs(reset_state.obs)
 
-        obs = _select(reset_state.obs, next_pg.obs)
+        def _select(reset_val, next_val):
+            done_mask = next_pg.done
+            if next_val.ndim > 1:
+                done_mask = done_mask[:, None]
+            return jnp.where(done_mask, reset_val, next_val)
+
+        obs = _select(reset_obs, next_obs)
         pipeline = jax.tree.map(
-            lambda r, n: _select(r, n),
+            _select,
             reset_state.pipeline_state,
             next_pg.pipeline_state,
         )
@@ -118,7 +167,7 @@ class BraxCompatWrapper:
     thin wrapper that makes our env compatible with brax.training.agents
     use this for library-benchmark runs (Brax PPO, Brax SAC)
     '''
-    
+
     def __init__(self, env_name: str):
         from mujoco_playground import registry, wrapper
 

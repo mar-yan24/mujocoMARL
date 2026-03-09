@@ -4,10 +4,35 @@ from typing import Sequence, Callable
 import jax
 import jax.numpy as jnp
 import flax.linen as nn
-import distrax
+
 
 def get_activation(name: str) -> Callable:
     return {"elu": nn.elu, "relu": nn.relu, "tanh": nn.tanh}[name]
+
+
+# ---- distribution helpers (replaces distrax) ----
+
+def _gaussian_log_prob(mean, std, x):
+    '''log prob of diagonal gaussian, summed over last dim'''
+    var = std ** 2
+    log_p = -0.5 * (jnp.log(2 * jnp.pi * var) + (x - mean) ** 2 / var)
+    return log_p.sum(-1)
+
+
+def _gaussian_sample(mean, std, rng):
+    '''reparameterized sample from diagonal gaussian'''
+    eps = jax.random.normal(rng, mean.shape)
+    return mean + std * eps
+
+
+def _tanh_squash_log_prob(log_prob_gauss, pre_tanh_action):
+    '''
+    correct log_prob for tanh squashing:
+      log pi(a) = log pi_gauss(u) - sum(log(1 - tanh(u)^2))
+    where a = tanh(u)
+    '''
+    correction = jnp.log(1.0 - jnp.tanh(pre_tanh_action) ** 2 + 1e-6).sum(-1)
+    return log_prob_gauss - correction
 
 
 class MLP(nn.Module):
@@ -21,7 +46,7 @@ class MLP(nn.Module):
         for dim in self.hidden_dims:
             x = act(nn.Dense(dim)(x))
         return x
-    
+
 
 class DeterministicActor(nn.Module):
     '''Deterministic policy: obs -> action specificlly for ddpg and td3'''
@@ -38,13 +63,14 @@ class DeterministicActor(nn.Module):
             kernel_init=nn.initializers.uniform(scale=self.init_scale),
         )(x)
         return jnp.tanh(action)
-    
+
 
 class StochasticActor(nn.Module):
     '''
     we want gaussian policy: obs -> (mean, log_std) -> sample
-    specifically used for ppo, sac, a2c, trpo
+    specifically used for ppo, a2c, trpo
     '''
+    hidden_dims: Sequence[int]
     action_dim: int
     activation: str = "elu"
     log_std_min: float = -5.0
@@ -69,16 +95,14 @@ class StochasticActor(nn.Module):
         log_std = jnp.clip(log_std, self.log_std_min, self.log_std_max)
         std = jnp.exp(log_std)
 
-        dist = distrax.Normal(mean, std)
         if deterministic:
             action = mean
-            log_prob = dist.log_prob(action).sum(-1)
         else:
-            action = dist.sample(seed=self.make_rng("sample"))
-            log_prob = dist.log_prob(action).sum(-1)
+            action = _gaussian_sample(mean, std, self.make_rng("sample"))
+        log_prob = _gaussian_log_prob(mean, std, action)
 
         return action, log_prob, mean, log_std
-    
+
 
 class TanhStochasticActor(nn.Module):
     '''compressed gaussian for SAC'''
@@ -95,17 +119,19 @@ class TanhStochasticActor(nn.Module):
         log_std = jnp.clip(
             nn.Dense(self.action_dim)(x), self.log_std_min, self.log_std_max
         )
-
-        dist = distrax.Transformed(
-            distrax.MultivariateNormalDiag(mean, jnp.exp(log_std)),
-            distrax.Block(distrax.Tanh(), ndims=1),
-        )
+        std = jnp.exp(log_std)
 
         if deterministic:
             action = jnp.tanh(mean)
-            log_prob = dist.log_prob(action)
+            # log prob at the mean (for logging, not used in loss)
+            gauss_log_prob = _gaussian_log_prob(mean, std, mean)
+            log_prob = _tanh_squash_log_prob(gauss_log_prob, mean)
         else:
-            action, log_prob = dist.sample_and_log_prob(seed=self.make_rng("sample"))
+            # reparameterized sample, then squash
+            pre_tanh = _gaussian_sample(mean, std, self.make_rng("sample"))
+            action = jnp.tanh(pre_tanh)
+            gauss_log_prob = _gaussian_log_prob(mean, std, pre_tanh)
+            log_prob = _tanh_squash_log_prob(gauss_log_prob, pre_tanh)
 
         return action, log_prob
 
@@ -166,7 +192,7 @@ class DistributionalQCritic(nn.Module):
 
 
 class AMPDiscriminator(nn.Module):
-    '''AMP discriminator: (s_t, s_{t+1}) → real/fake logit'''
+    '''AMP discriminator: (s_t, s_{t+1}) -> real/fake logit'''
     hidden_dims: Sequence[int]
     activation: str = "elu"
 
